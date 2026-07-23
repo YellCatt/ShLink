@@ -9,17 +9,16 @@ import (
 )
 
 type HostConfig struct {
-	Host         string `yaml:"host"`
-	Port         string `yaml:"port"`
-	User         string `yaml:"user"`
-	Password     string `yaml:"password"`
-	KeyFile      string `yaml:"key_file"`
-	JumpHost     string `yaml:"jump_host"`
-	JumpUser     string `yaml:"jump_user"`
-	JumpKey      string `yaml:"jump_key"`
-	JumpPasswd   string `yaml:"jump_passwd"`
-	ScriptDir    string `yaml:"script_dir"`
-	DefaultScript string `yaml:"default_script"`
+	Host        string `yaml:"host"`
+	Port        string `yaml:"port"`
+	User        string `yaml:"user"`
+	Password    string `yaml:"password"`
+	KeyFile     string `yaml:"key_file"`
+	JumpHost    string `yaml:"jump_host"`
+	JumpUser    string `yaml:"jump_user"`
+	JumpKey     string `yaml:"jump_key"`
+	JumpPasswd  string `yaml:"jump_passwd"`
+	ScriptDir   string `yaml:"script_dir"`
 }
 
 type GlobalConfig struct {

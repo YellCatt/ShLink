@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sagikazarmark/slog-shim"
@@ -153,10 +154,6 @@ func main() {
 			if opt.scriptDir == "" {
 				opt.scriptDir = hostConfig.ScriptDir
 			}
-			if opt.script == "" && hostConfig.DefaultScript != "" {
-				opt.script = hostConfig.DefaultScript
-				slog.Info("使用默认脚本", "script", opt.script)
-			}
 			if !opt.usePty {
 				opt.usePty = config.Global.UsePty
 			}
@@ -177,18 +174,6 @@ func main() {
 		opt.scriptDir = "scripts"
 	}
 
-	var scriptContent []byte
-	if opt.script != "" {
-		scriptPath := filepath.Join(opt.scriptDir, opt.script)
-		var err error
-		scriptContent, err = os.ReadFile(scriptPath)
-		if err != nil {
-			slog.Error("读取脚本文件失败", "error", err)
-			os.Exit(1)
-		}
-		slog.Info("加载脚本", "path", scriptPath)
-	}
-
 	client, err := dial(opt)
 	if err != nil {
 		slog.Error("连接失败", "error", err)
@@ -197,23 +182,58 @@ func main() {
 	defer client.Close()
 	slog.Info("已连接到主机", "host", opt.host, "port", opt.port)
 
-	if opt.script != "" && len(scriptContent) > 0 {
-		slog.Info("执行脚本...")
-		output, err := runScript(client, scriptContent)
-		if err != nil {
-			slog.Error("脚本执行失败", "error", err)
-			saveReport(opt.host, opt.script, output)
-			saveSummary(opt.host, opt.script, "FAILED", err.Error())
-			saveFailedMarker(opt.host)
-			os.Exit(1)
-		}
-		saveReport(opt.host, opt.script, output)
-		saveSummary(opt.host, opt.script, "SUCCESS", "")
-	} else if opt.command != "" {
+	if opt.command != "" {
 		slog.Info("执行命令", "command", opt.command)
 		if err := runCommand(client, opt); err != nil {
 			slog.Error("命令执行失败", "error", err)
+			saveSummary(opt.host, opt.command, "FAILED", err.Error())
+			saveFailedMarker(opt.host)
 			os.Exit(1)
+		}
+		saveSummary(opt.host, opt.command, "SUCCESS", "")
+	} else {
+		var scripts []string
+		if opt.script != "" {
+			scripts = []string{opt.script}
+		} else {
+			files, err := os.ReadDir(opt.scriptDir)
+			if err != nil {
+				slog.Error("读取脚本目录失败", "error", err)
+				os.Exit(1)
+			}
+			for _, file := range files {
+				if !file.IsDir() && strings.HasSuffix(file.Name(), ".sh") {
+					scripts = append(scripts, file.Name())
+				}
+			}
+			if len(scripts) == 0 {
+				slog.Warn("脚本目录为空", "directory", opt.scriptDir)
+				return
+			}
+			slog.Info("发现脚本文件", "count", len(scripts), "scripts", strings.Join(scripts, ", "))
+		}
+
+		for _, scriptName := range scripts {
+			scriptPath := filepath.Join(opt.scriptDir, scriptName)
+			scriptContent, err := os.ReadFile(scriptPath)
+			if err != nil {
+				slog.Error("读取脚本文件失败", "error", err, "file", scriptPath)
+				saveSummary(opt.host, scriptName, "FAILED", err.Error())
+				saveFailedMarker(opt.host)
+				continue
+			}
+
+			slog.Info("执行脚本", "script", scriptName)
+			output, err := runScript(client, scriptContent)
+			if err != nil {
+				slog.Error("脚本执行失败", "script", scriptName, "error", err)
+				saveReport(opt.host, scriptName, output)
+				saveSummary(opt.host, scriptName, "FAILED", err.Error())
+				saveFailedMarker(opt.host)
+			} else {
+				saveReport(opt.host, scriptName, output)
+				saveSummary(opt.host, scriptName, "SUCCESS", "")
+			}
 		}
 	}
 
