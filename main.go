@@ -4,7 +4,9 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sagikazarmark/slog-shim"
@@ -30,6 +32,7 @@ type options struct {
 	group       string
 	tag         string
 	batch       bool
+	workers     int
 }
 
 func parseFlags() (options, string) {
@@ -62,6 +65,7 @@ func parseFlags() (options, string) {
 	flag.StringVar(&opt.group, "group", "", "环境组名称（批量执行）")
 	flag.StringVar(&opt.tag, "tag", "", "标签筛选（按标签批量执行）")
 	flag.BoolVar(&opt.batch, "batch", false, "批量执行所有主机")
+	flag.IntVar(&opt.workers, "workers", 0, "并行执行的并发数（0表示自动根据CPU核心数计算）")
 	flag.Parse()
 	return opt, configFile
 }
@@ -150,13 +154,67 @@ func main() {
 
 	slog.Info("目标主机列表", "count", len(targetHosts), "hosts", strings.Join(targetHosts, ", "))
 
-	for _, hostName := range targetHosts {
-		slog.Info("========================================")
-		slog.Info("处理主机", "host", hostName)
-		executeOnHost(config, hostName, opt)
+	if opt.batch && config != nil && config.Global.Parallel {
+		executeParallel(config, targetHosts, opt)
+	} else {
+		for _, hostName := range targetHosts {
+			slog.Info("========================================")
+			slog.Info("处理主机", "host", hostName)
+			executeOnHost(config, hostName, opt)
+		}
 	}
 
 	slog.Info("所有主机处理完成")
+}
+
+func executeParallel(config *Config, hosts []string, baseOpt options) {
+	cpuCount := runtime.NumCPU()
+	maxWorkers := 0
+
+	if baseOpt.workers > 0 {
+		maxWorkers = baseOpt.workers
+		slog.Info("使用命令行指定的并发数", "workers", maxWorkers)
+	} else if config != nil && config.Global.ParallelWorkers > 0 {
+		maxWorkers = config.Global.ParallelWorkers
+		slog.Info("使用配置文件指定的并发数", "workers", maxWorkers)
+	} else if cpuCount > 0 {
+		maxWorkers = cpuCount * 2
+		slog.Info("自动计算并发数", "cpu_cores", cpuCount, "workers", maxWorkers)
+	}
+
+	if maxWorkers <= 0 {
+		slog.Warn("无法确定并发数，回退到串行执行")
+		for _, hostName := range hosts {
+			slog.Info("========================================")
+			slog.Info("串行处理主机", "host", hostName)
+			executeOnHost(config, hostName, baseOpt)
+		}
+		return
+	}
+
+	if maxWorkers > len(hosts) {
+		maxWorkers = len(hosts)
+	}
+
+	slog.Info("并行执行模式", "max_workers", maxWorkers, "target_hosts", len(hosts))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxWorkers)
+
+	for _, hostName := range hosts {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			slog.Info("========================================")
+			slog.Info("并行处理主机", "host", name)
+			executeOnHost(config, name, baseOpt)
+		}(hostName)
+	}
+
+	wg.Wait()
 }
 
 func executeOnHost(config *Config, hostName string, baseOpt options) {

@@ -36,10 +36,12 @@ type Config struct {
 }
 
 type GlobalConfig struct {
-	Timeout     int  `yaml:"timeout"`
-	UsePty      bool `yaml:"use_pty"`
-	ScriptDir   string `yaml:"script_dir"`
-	DefaultHost string `yaml:"default_host"`
+	Timeout        int  `yaml:"timeout"`
+	UsePty         bool `yaml:"use_pty"`
+	ScriptDir      string `yaml:"script_dir"`
+	DefaultHost    string `yaml:"default_host"`
+	Parallel       bool `yaml:"parallel"`
+	ParallelWorkers int  `yaml:"parallel_workers"`
 }
 
 func loadConfig(configFile string) (*Config, error) {

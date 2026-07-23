@@ -139,3 +139,5 @@ global:
   use_pty: false
   script_dir: "scripts"
   default_host: "prod-web-01"
+  parallel: true
+  parallel_workers: 10
