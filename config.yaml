@@ -6,6 +6,7 @@ hosts:
     password: ""
     key_file: "~/.ssh/id_rsa"
     script_dir: "scripts/production"
+    default_script: "deploy.sh"
 
   staging:
     host: 192.168.1.101
@@ -14,6 +15,7 @@ hosts:
     password: ""
     key_file: "~/.ssh/id_rsa"
     script_dir: "scripts/staging"
+    default_script: "test.sh"
 
   backend:
     host: 10.0.0.5
@@ -24,8 +26,10 @@ hosts:
     jump_user: bastion
     jump_key: "~/.ssh/id_rsa"
     script_dir: "scripts/backend"
+    default_script: "health.sh"
 
 global:
   timeout: 10
   use_pty: false
   script_dir: "scripts"
+  default_host: "production"

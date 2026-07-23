@@ -32,22 +32,24 @@ type options struct {
 }
 
 type HostConfig struct {
-	Host       string `yaml:"host"`
-	Port       string `yaml:"port"`
-	User       string `yaml:"user"`
-	Password   string `yaml:"password"`
-	KeyFile    string `yaml:"key_file"`
-	JumpHost   string `yaml:"jump_host"`
-	JumpUser   string `yaml:"jump_user"`
-	JumpKey    string `yaml:"jump_key"`
-	JumpPasswd string `yaml:"jump_passwd"`
-	ScriptDir  string `yaml:"script_dir"`
+	Host         string `yaml:"host"`
+	Port         string `yaml:"port"`
+	User         string `yaml:"user"`
+	Password     string `yaml:"password"`
+	KeyFile      string `yaml:"key_file"`
+	JumpHost     string `yaml:"jump_host"`
+	JumpUser     string `yaml:"jump_user"`
+	JumpKey      string `yaml:"jump_key"`
+	JumpPasswd   string `yaml:"jump_passwd"`
+	ScriptDir    string `yaml:"script_dir"`
+	DefaultScript string `yaml:"default_script"`
 }
 
 type GlobalConfig struct {
-	Timeout   int  `yaml:"timeout"`
-	UsePty    bool `yaml:"use_pty"`
-	ScriptDir string `yaml:"script_dir"`
+	Timeout      int  `yaml:"timeout"`
+	UsePty       bool `yaml:"use_pty"`
+	ScriptDir    string `yaml:"script_dir"`
+	DefaultHost  string `yaml:"default_host"`
 }
 
 type Config struct {
@@ -307,8 +309,20 @@ func main() {
 
 	opt, configFile := parseFlags()
 
-	if opt.command == "" && opt.script == "" && !opt.listScripts {
+	config, err := loadConfig(configFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "警告: 加载配置文件失败: %v (将使用命令行参数)\n", err)
+	} else {
+		if opt.host == "" && config.Global.DefaultHost != "" {
+			opt.host = config.Global.DefaultHost
+			fmt.Fprintf(os.Stderr, "==> 使用默认主机: %s\n", opt.host)
+		}
+	}
+
+	if opt.host == "" {
 		fmt.Fprintln(os.Stderr, "用法示例:")
+		fmt.Fprintln(os.Stderr, "  直接运行: shlink")
+		fmt.Fprintln(os.Stderr, "  指定主机: shlink -host production")
 		fmt.Fprintln(os.Stderr, "  密码认证: shlink -host 192.168.1.100 -user root -password secret -cmd 'ls -la'")
 		fmt.Fprintln(os.Stderr, "  密钥认证: shlink -host 192.168.1.100 -user root -key ~/.ssh/id_rsa -cmd 'ls -la'")
 		fmt.Fprintln(os.Stderr, "  跳板机:   shlink -host 10.0.0.5 -user root -key ~/.ssh/id_rsa -jump 192.168.1.1 -cmd 'hostname'")
@@ -319,12 +333,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if opt.host == "" {
-		fmt.Fprintln(os.Stderr, "错误: -host 参数必填")
-		os.Exit(1)
-	}
-
-	config, err := loadConfig(configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "警告: 加载配置文件失败: %v (将使用命令行参数)\n", err)
 	} else {
@@ -356,6 +364,10 @@ func main() {
 			}
 			if opt.scriptDir == "" {
 				opt.scriptDir = hostConfig.ScriptDir
+			}
+			if opt.script == "" && hostConfig.DefaultScript != "" {
+				opt.script = hostConfig.DefaultScript
+				fmt.Fprintf(os.Stderr, "==> 使用默认脚本: %s\n", opt.script)
 			}
 			if !opt.usePty {
 				opt.usePty = config.Global.UsePty
@@ -389,7 +401,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "读取脚本文件失败: %v\n", err)
 			os.Exit(1)
 		}
-		opt.command = string(scriptContent)
+		opt.command = "bash -c " + fmt.Sprintf("%q", string(scriptContent))
 		fmt.Fprintf(os.Stderr, "==> 加载脚本: %s\n", scriptPath)
 	}
 
@@ -432,6 +444,7 @@ func initConfig() error {
     password: ""
     key_file: "~/.ssh/id_rsa"
     script_dir: "scripts/production"
+    default_script: "deploy.sh"
 
   staging:
     host: 192.168.1.101
@@ -440,6 +453,7 @@ func initConfig() error {
     password: ""
     key_file: "~/.ssh/id_rsa"
     script_dir: "scripts/staging"
+    default_script: "test.sh"
 
   backend:
     host: 10.0.0.5
@@ -450,11 +464,13 @@ func initConfig() error {
     jump_user: bastion
     jump_key: "~/.ssh/id_rsa"
     script_dir: "scripts/backend"
+    default_script: "health.sh"
 
 global:
   timeout: 10
   use_pty: false
   script_dir: "scripts"
+  default_host: "production"
 `
 
 	if _, err := os.Stat("config.yaml"); os.IsNotExist(err) {
