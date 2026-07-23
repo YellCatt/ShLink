@@ -336,7 +336,12 @@ func streamLines(prefix string, r io.Reader) {
 }
 
 func main() {
-	loc, _ := time.LoadLocation("Asia/Shanghai")
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		slog.Warn("加载时区失败，使用UTC+8偏移量", "error", err)
+		loc = time.FixedZone("CST", 8*60*60)
+	}
+	
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
