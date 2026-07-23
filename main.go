@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -20,6 +21,9 @@ type options struct {
 	password   string
 	keyFile    string
 	command    string
+	script     string
+	scriptDir  string
+	listScripts bool
 	usePty     bool
 	jumpHost   string
 	jumpUser   string
@@ -27,21 +31,64 @@ type options struct {
 	jumpPasswd string
 }
 
-func parseFlags() options {
+type HostConfig struct {
+	Host       string `yaml:"host"`
+	Port       string `yaml:"port"`
+	User       string `yaml:"user"`
+	Password   string `yaml:"password"`
+	KeyFile    string `yaml:"key_file"`
+	JumpHost   string `yaml:"jump_host"`
+	JumpUser   string `yaml:"jump_user"`
+	JumpKey    string `yaml:"jump_key"`
+	JumpPasswd string `yaml:"jump_passwd"`
+	ScriptDir  string `yaml:"script_dir"`
+}
+
+type GlobalConfig struct {
+	Timeout   int  `yaml:"timeout"`
+	UsePty    bool `yaml:"use_pty"`
+	ScriptDir string `yaml:"script_dir"`
+}
+
+type Config struct {
+	Hosts  map[string]HostConfig `yaml:"hosts"`
+	Global GlobalConfig          `yaml:"global"`
+}
+
+func loadConfig(configFile string) (*Config, error) {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("读取配置文件失败: %w", err)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("解析配置文件失败: %w", err)
+	}
+
+	return &config, nil
+}
+
+func parseFlags() (options, string) {
 	var opt options
-	flag.StringVar(&opt.host, "host", "", "远程主机地址 (必填)")
-	flag.StringVar(&opt.port, "port", "22", "远程主机端口")
-	flag.StringVar(&opt.user, "user", "root", "登录用户名")
+	var configFile string
+	flag.StringVar(&configFile, "config", "config.yaml", "配置文件路径")
+	flag.StringVar(&opt.host, "host", "", "远程主机地址或配置文件中的主机名 (必填)")
+	flag.StringVar(&opt.port, "port", "", "远程主机端口")
+	flag.StringVar(&opt.user, "user", "", "登录用户名")
 	flag.StringVar(&opt.password, "password", "", "登录密码")
 	flag.StringVar(&opt.keyFile, "key", "", "私钥文件路径 (例如 ~/.ssh/id_rsa)")
-	flag.StringVar(&opt.command, "cmd", "", "要执行的命令 (必填)")
+	flag.StringVar(&opt.command, "cmd", "", "要执行的命令")
+	flag.StringVar(&opt.script, "script", "", "要执行的脚本文件名（在 script_dir 目录下）")
+	flag.StringVar(&opt.scriptDir, "script-dir", "", "脚本目录")
+	flag.BoolVar(&opt.listScripts, "list-scripts", false, "列出可用的脚本文件")
 	flag.BoolVar(&opt.usePty, "pty", false, "是否申请伪终端 (sudo 等交互场景)")
 	flag.StringVar(&opt.jumpHost, "jump", "", "跳板机地址 host:port")
-	flag.StringVar(&opt.jumpUser, "jump-user", "", "跳板机用户名，默认与 user 相同")
+	flag.StringVar(&opt.jumpUser, "jump-user", "", "跳板机用户名")
 	flag.StringVar(&opt.jumpKey, "jump-key", "", "跳板机私钥")
 	flag.StringVar(&opt.jumpPasswd, "jump-pass", "", "跳板机密码")
 	flag.Parse()
-	return opt
+	return opt, configFile
 }
 
 func buildAuthMethods(password, keyFile string) ([]ssh.AuthMethod, error) {
@@ -253,15 +300,92 @@ func streamLines(prefix string, r io.Reader) {
 }
 
 func main() {
-	opt := parseFlags()
+	opt, configFile := parseFlags()
 
-	if opt.host == "" || opt.command == "" {
+	if opt.command == "" && opt.script == "" && !opt.listScripts {
 		fmt.Fprintln(os.Stderr, "用法示例:")
-		fmt.Fprintln(os.Stderr, "  密码认证: ShLink -host 192.168.1.100 -user root -password secret -cmd 'ls -la'")
-		fmt.Fprintln(os.Stderr, "  密钥认证: ShLink -host 192.168.1.100 -user root -key ~/.ssh/id_rsa -cmd 'ls -la'")
-		fmt.Fprintln(os.Stderr, "  跳板机:   ShLink -host 10.0.0.5 -user root -key ~/.ssh/id_rsa -jump 192.168.1.1 -cmd 'hostname'")
+		fmt.Fprintln(os.Stderr, "  密码认证: shlink -host 192.168.1.100 -user root -password secret -cmd 'ls -la'")
+		fmt.Fprintln(os.Stderr, "  密钥认证: shlink -host 192.168.1.100 -user root -key ~/.ssh/id_rsa -cmd 'ls -la'")
+		fmt.Fprintln(os.Stderr, "  跳板机:   shlink -host 10.0.0.5 -user root -key ~/.ssh/id_rsa -jump 192.168.1.1 -cmd 'hostname'")
+		fmt.Fprintln(os.Stderr, "  使用配置文件: shlink -host production -cmd 'ls -la'")
+		fmt.Fprintln(os.Stderr, "  执行脚本: shlink -host production -script deploy.sh")
+		fmt.Fprintln(os.Stderr, "  列出脚本: shlink -host production -list-scripts")
 		flag.PrintDefaults()
 		os.Exit(1)
+	}
+
+	if opt.host == "" {
+		fmt.Fprintln(os.Stderr, "错误: -host 参数必填")
+		os.Exit(1)
+	}
+
+	config, err := loadConfig(configFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "警告: 加载配置文件失败: %v (将使用命令行参数)\n", err)
+	} else {
+		if hostConfig, ok := config.Hosts[opt.host]; ok {
+			fmt.Fprintf(os.Stderr, "==> 从配置文件加载主机: %s\n", opt.host)
+			if opt.port == "" {
+				opt.port = hostConfig.Port
+			}
+			if opt.user == "" {
+				opt.user = hostConfig.User
+			}
+			if opt.password == "" {
+				opt.password = hostConfig.Password
+			}
+			if opt.keyFile == "" {
+				opt.keyFile = hostConfig.KeyFile
+			}
+			if opt.jumpHost == "" {
+				opt.jumpHost = hostConfig.JumpHost
+			}
+			if opt.jumpUser == "" {
+				opt.jumpUser = hostConfig.JumpUser
+			}
+			if opt.jumpKey == "" {
+				opt.jumpKey = hostConfig.JumpKey
+			}
+			if opt.jumpPasswd == "" {
+				opt.jumpPasswd = hostConfig.JumpPasswd
+			}
+			if opt.scriptDir == "" {
+				opt.scriptDir = hostConfig.ScriptDir
+			}
+			if !opt.usePty {
+				opt.usePty = config.Global.UsePty
+			}
+			if opt.scriptDir == "" {
+				opt.scriptDir = config.Global.ScriptDir
+			}
+			opt.host = hostConfig.Host
+		}
+	}
+
+	if opt.port == "" {
+		opt.port = "22"
+	}
+	if opt.user == "" {
+		opt.user = "root"
+	}
+	if opt.scriptDir == "" {
+		opt.scriptDir = "scripts"
+	}
+
+	if opt.listScripts {
+		listScripts(opt.scriptDir)
+		return
+	}
+
+	if opt.script != "" {
+		scriptPath := filepath.Join(opt.scriptDir, opt.script)
+		scriptContent, err := os.ReadFile(scriptPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "读取脚本文件失败: %v\n", err)
+			os.Exit(1)
+		}
+		opt.command = string(scriptContent)
+		fmt.Fprintf(os.Stderr, "==> 加载脚本: %s\n", scriptPath)
 	}
 
 	client, err := dial(opt)
@@ -278,4 +402,19 @@ func main() {
 	}
 
 	fmt.Fprintln(os.Stderr, "==> 命令执行完成")
+}
+
+func listScripts(scriptDir string) {
+	files, err := os.ReadDir(scriptDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读取脚本目录失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("可用脚本列表 (%s):\n", scriptDir)
+	for _, file := range files {
+		if !file.IsDir() {
+			fmt.Printf("  - %s\n", file.Name())
+		}
+	}
 }
