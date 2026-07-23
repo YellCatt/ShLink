@@ -35,6 +35,55 @@ type options struct {
 	workers     int
 }
 
+type ExecutionResult struct {
+	Host     string
+	Script   string
+	Success  bool
+	Error    error
+	Duration time.Duration
+}
+
+var executionResults []ExecutionResult
+var resultsMutex sync.Mutex
+
+func addExecutionResult(result ExecutionResult) {
+	resultsMutex.Lock()
+	defer resultsMutex.Unlock()
+	executionResults = append(executionResults, result)
+}
+
+func printSummaryReport() {
+	total := len(executionResults)
+	successCount := 0
+	failedCount := 0
+	var failedHosts []string
+
+	for _, result := range executionResults {
+		if result.Success {
+			successCount++
+		} else {
+			failedCount++
+			failedHosts = append(failedHosts, result.Host)
+		}
+	}
+
+	slog.Info("========================================")
+	slog.Info("执行汇总报告")
+	slog.Info("----------------------------------------")
+	slog.Info("总任务数", "count", total)
+	slog.Info("成功", "count", successCount)
+	slog.Info("失败", "count", failedCount)
+
+	if failedCount > 0 {
+		slog.Error("失败主机列表", "hosts", strings.Join(failedHosts, ", "))
+	}
+
+	if failedCount == 0 && total > 0 {
+		slog.Info("✓ 所有任务执行成功!")
+	}
+	slog.Info("========================================")
+}
+
 func parseFlags() (options, string) {
 	var opt options
 	var configFile string
@@ -165,6 +214,7 @@ func main() {
 	}
 
 	slog.Info("所有主机处理完成")
+	printSummaryReport()
 }
 
 func executeParallel(config *Config, hosts []string, baseOpt options) {
@@ -271,11 +321,19 @@ func executeOnHost(config *Config, hostName string, baseOpt options) {
 		opt.scriptDir = "scripts"
 	}
 
+	startTime := time.Now()
 	client, err := dial(opt)
 	if err != nil {
 		slog.Error("连接失败", "error", err)
 		saveSummary(hostName, "connection", "FAILED", err.Error())
 		saveFailedMarker(hostName)
+		addExecutionResult(ExecutionResult{
+			Host:     hostName,
+			Script:   "connection",
+			Success:  false,
+			Error:    err,
+			Duration: time.Since(startTime),
+		})
 		return
 	}
 	defer client.Close()
@@ -287,8 +345,22 @@ func executeOnHost(config *Config, hostName string, baseOpt options) {
 			slog.Error("命令执行失败", "error", err)
 			saveSummary(hostName, opt.command, "FAILED", err.Error())
 			saveFailedMarker(hostName)
+			addExecutionResult(ExecutionResult{
+				Host:     hostName,
+				Script:   opt.command,
+				Success:  false,
+				Error:    err,
+				Duration: time.Since(startTime),
+			})
 		} else {
 			saveSummary(hostName, opt.command, "SUCCESS", "")
+			addExecutionResult(ExecutionResult{
+				Host:     hostName,
+				Script:   opt.command,
+				Success:  true,
+				Error:    nil,
+				Duration: time.Since(startTime),
+			})
 		}
 	} else {
 		var scripts []string
@@ -313,12 +385,20 @@ func executeOnHost(config *Config, hostName string, baseOpt options) {
 		}
 
 		for _, scriptName := range scripts {
+			scriptStartTime := time.Now()
 			scriptPath := filepath.Join(opt.scriptDir, scriptName)
 			scriptContent, err := os.ReadFile(scriptPath)
 			if err != nil {
 				slog.Error("读取脚本文件失败", "error", err, "file", scriptPath)
 				saveSummary(hostName, scriptName, "FAILED", err.Error())
 				saveFailedMarker(hostName)
+				addExecutionResult(ExecutionResult{
+					Host:     hostName,
+					Script:   scriptName,
+					Success:  false,
+					Error:    err,
+					Duration: time.Since(scriptStartTime),
+				})
 				continue
 			}
 
@@ -329,9 +409,23 @@ func executeOnHost(config *Config, hostName string, baseOpt options) {
 				saveReport(hostName, scriptName, output)
 				saveSummary(hostName, scriptName, "FAILED", err.Error())
 				saveFailedMarker(hostName)
+				addExecutionResult(ExecutionResult{
+					Host:     hostName,
+					Script:   scriptName,
+					Success:  false,
+					Error:    err,
+					Duration: time.Since(scriptStartTime),
+				})
 			} else {
 				saveReport(hostName, scriptName, output)
 				saveSummary(hostName, scriptName, "SUCCESS", "")
+				addExecutionResult(ExecutionResult{
+					Host:     hostName,
+					Script:   scriptName,
+					Success:  true,
+					Error:    nil,
+					Duration: time.Since(scriptStartTime),
+				})
 			}
 		}
 	}
