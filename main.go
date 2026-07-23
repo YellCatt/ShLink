@@ -3,13 +3,13 @@ package main
 import (
 	"bufio"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/sagikazarmark/slog-shim"
 	"gopkg.in/yaml.v3"
 	"golang.org/x/crypto/ssh"
 )
@@ -335,29 +335,41 @@ func streamLines(prefix string, r io.Reader) {
 }
 
 func main() {
-	fmt.Fprintf(os.Stderr, "==> 启动 shlink...\n")
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	slog.SetDefault(slog.New(slog.HandlerOptions{
+		Level: slog.LevelInfo,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				t := a.Value.Time().In(loc)
+				return slog.Attr{Key: slog.TimeKey, Value: slog.StringValue(t.Format("2006-01-02 15:04:05"))}
+			}
+			return a
+		},
+	}.NewTextHandler(os.Stderr)))
+	
+	slog.Info("启动 shlink...")
 	
 	if err := initConfig(); err != nil {
-		fmt.Fprintf(os.Stderr, "初始化配置失败: %v\n", err)
+		slog.Error("初始化配置失败", "error", err)
 		os.Exit(1)
 	}
 
 	opt, configFile := parseFlags()
-	fmt.Fprintf(os.Stderr, "==> 配置文件路径: %s\n", configFile)
-	fmt.Fprintf(os.Stderr, "==> 命令行指定的主机: [%s]\n", opt.host)
+	slog.Info("配置文件路径", "path", configFile)
+	slog.Info("命令行指定的主机", "host", opt.host)
 
 	config, err := loadConfig(configFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "警告: 加载配置文件失败: %v (将使用命令行参数)\n", err)
+		slog.Warn("加载配置文件失败", "error", err, "message", "将使用命令行参数")
 	} else {
-		fmt.Fprintf(os.Stderr, "==> 配置文件加载成功\n")
-		fmt.Fprintf(os.Stderr, "==> 默认主机配置: [%s]\n", config.Global.DefaultHost)
+		slog.Info("配置文件加载成功")
+		slog.Info("默认主机配置", "host", config.Global.DefaultHost)
 		
 		if opt.host == "" && config.Global.DefaultHost != "" {
 			opt.host = config.Global.DefaultHost
-			fmt.Fprintf(os.Stderr, "==> 使用默认主机: %s\n", opt.host)
+			slog.Info("使用默认主机", "host", opt.host)
 		} else if opt.host == "" && config.Global.DefaultHost == "" {
-			fmt.Fprintf(os.Stderr, "警告: 默认主机未配置\n")
+			slog.Warn("默认主机未配置")
 		}
 	}
 
@@ -376,10 +388,10 @@ func main() {
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "警告: 加载配置文件失败: %v (将使用命令行参数)\n", err)
+		slog.Warn("加载配置文件失败", "error", err, "message", "将使用命令行参数")
 	} else {
 		if hostConfig, ok := config.Hosts[opt.host]; ok {
-			fmt.Fprintf(os.Stderr, "==> 从配置文件加载主机: %s\n", opt.host)
+			slog.Info("从配置文件加载主机", "host", opt.host)
 			if opt.port == "" {
 				opt.port = hostConfig.Port
 			}
@@ -409,7 +421,7 @@ func main() {
 			}
 			if opt.script == "" && hostConfig.DefaultScript != "" {
 				opt.script = hostConfig.DefaultScript
-				fmt.Fprintf(os.Stderr, "==> 使用默认脚本: %s\n", opt.script)
+				slog.Info("使用默认脚本", "script", opt.script)
 			}
 			if !opt.usePty {
 				opt.usePty = config.Global.UsePty
@@ -442,35 +454,35 @@ func main() {
 		var err error
 		scriptContent, err = os.ReadFile(scriptPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "读取脚本文件失败: %v\n", err)
+			slog.Error("读取脚本文件失败", "error", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "==> 加载脚本: %s\n", scriptPath)
+		slog.Info("加载脚本", "path", scriptPath)
 	}
 
 	client, err := dial(opt)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "连接失败: %v\n", err)
+		slog.Error("连接失败", "error", err)
 		os.Exit(1)
 	}
 	defer client.Close()
-	fmt.Fprintf(os.Stderr, "==> 已连接到 %s:%s\n", opt.host, opt.port)
+	slog.Info("已连接到主机", "host", opt.host, "port", opt.port)
 
 	if opt.script != "" && len(scriptContent) > 0 {
-		fmt.Fprintf(os.Stderr, "==> 执行脚本...\n")
+		slog.Info("执行脚本...")
 		if err := runScript(client, scriptContent); err != nil {
-			fmt.Fprintf(os.Stderr, "脚本执行失败: %v\n", err)
+			slog.Error("脚本执行失败", "error", err)
 			os.Exit(1)
 		}
 	} else if opt.command != "" {
-		fmt.Fprintf(os.Stderr, "==> 执行命令: %s\n", opt.command)
+		slog.Info("执行命令", "command", opt.command)
 		if err := runCommand(client, opt); err != nil {
-			fmt.Fprintf(os.Stderr, "命令执行失败: %v\n", err)
+			slog.Error("命令执行失败", "error", err)
 			os.Exit(1)
 		}
 	}
 
-	fmt.Fprintln(os.Stderr, "==> 执行完成")
+	slog.Info("执行完成")
 }
 
 func initConfig() error {
@@ -529,7 +541,7 @@ global:
 		if err := os.WriteFile("config.yaml", []byte(configContent), 0644); err != nil {
 			return fmt.Errorf("创建配置文件失败: %w", err)
 		}
-		fmt.Fprintln(os.Stderr, "==> 已创建配置文件: config.yaml")
+		slog.Info("已创建配置文件", "file", "config.yaml")
 	}
 
 	scripts := map[string]string{
@@ -561,7 +573,7 @@ echo "System update completed."`,
 			if err := os.WriteFile(path, []byte(content), 0755); err != nil {
 				return fmt.Errorf("创建脚本文件失败 %s: %w", path, err)
 			}
-			fmt.Fprintln(os.Stderr, "==> 已创建脚本文件:", path)
+			slog.Info("已创建脚本文件", "file", path)
 		}
 	}
 
@@ -571,14 +583,14 @@ echo "System update completed."`,
 func listScripts(scriptDir string) {
 	files, err := os.ReadDir(scriptDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "读取脚本目录失败: %v\n", err)
+		slog.Error("读取脚本目录失败", "error", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("可用脚本列表 (%s):\n", scriptDir)
+	slog.Info("可用脚本列表", "directory", scriptDir)
 	for _, file := range files {
 		if !file.IsDir() {
-			fmt.Printf("  - %s\n", file.Name())
+			slog.Info("脚本文件", "name", file.Name())
 		}
 	}
 }
