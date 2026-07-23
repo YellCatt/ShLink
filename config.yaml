@@ -1,35 +1,141 @@
 hosts:
-  production:
-    host: 192.168.1.100
+  prod-web-01:
+    host: 172.16.4.101
     port: 22
     user: root
     password: ""
     key_file: "~/.ssh/id_rsa"
-    script_dir: "scripts/production"
-    default_script: "deploy.sh"
+    script_dir: "scripts/prod-web"
+    tags: ["production", "web", "nginx"]
 
-  staging:
-    host: 192.168.1.101
+  prod-web-02:
+    host: 172.16.4.102
     port: 22
-    user: admin
+    user: root
     password: ""
     key_file: "~/.ssh/id_rsa"
-    script_dir: "scripts/staging"
-    default_script: "test.sh"
+    script_dir: "scripts/prod-web"
+    tags: ["production", "web", "nginx"]
 
-  backend:
-    host: 10.0.0.5
+  prod-web-03:
+    host: 172.16.4.103
+    port: 22
+    user: root
+    password: ""
+    key_file: "~/.ssh/id_rsa"
+    script_dir: "scripts/prod-web"
+    tags: ["production", "web", "nginx"]
+
+  prod-api-01:
+    host: 10.0.1.101
     port: 22
     user: appuser
+    password: ""
     key_file: "~/.ssh/id_rsa"
-    jump_host: 192.168.1.200
+    jump_host: 172.16.4.200
     jump_user: bastion
     jump_key: "~/.ssh/id_rsa"
-    script_dir: "scripts/backend"
-    default_script: "health.sh"
+    script_dir: "scripts/prod-api"
+    tags: ["production", "api", "java"]
+
+  prod-api-02:
+    host: 10.0.1.102
+    port: 22
+    user: appuser
+    password: ""
+    key_file: "~/.ssh/id_rsa"
+    jump_host: 172.16.4.200
+    jump_user: bastion
+    jump_key: "~/.ssh/id_rsa"
+    script_dir: "scripts/prod-api"
+    tags: ["production", "api", "java"]
+
+  prod-db-01:
+    host: 10.0.1.201
+    port: 22
+    user: dbuser
+    password: ""
+    key_file: "~/.ssh/id_rsa_db"
+    jump_host: 172.16.4.200
+    jump_user: bastion
+    jump_key: "~/.ssh/id_rsa"
+    script_dir: "scripts/prod-db"
+    tags: ["production", "database", "mysql"]
+
+  prod-db-02:
+    host: 10.0.1.202
+    port: 22
+    user: dbuser
+    password: ""
+    key_file: "~/.ssh/id_rsa_db"
+    jump_host: 172.16.4.200
+    jump_user: bastion
+    jump_key: "~/.ssh/id_rsa"
+    script_dir: "scripts/prod-db"
+    tags: ["production", "database", "mysql"]
+
+  staging-web-01:
+    host: 172.16.4.151
+    port: 22
+    user: admin
+    password: "St@gingP@ss!"
+    script_dir: "scripts/staging-web"
+    tags: ["staging", "web"]
+
+  staging-api-01:
+    host: 10.0.2.101
+    port: 22
+    user: appuser
+    password: ""
+    key_file: "~/.ssh/id_rsa"
+    jump_host: 172.16.4.201
+    jump_user: bastion
+    jump_key: "~/.ssh/id_rsa"
+    script_dir: "scripts/staging-api"
+    tags: ["staging", "api"]
+
+  uat-web-01:
+    host: 172.16.4.181
+    port: 22
+    user: tester
+    password: "U@tT3st!"
+    script_dir: "scripts/uat-web"
+    tags: ["uat", "web"]
+
+env_groups:
+  - name: prod-all
+    hosts:
+      - prod-web-01
+      - prod-web-02
+      - prod-web-03
+      - prod-api-01
+      - prod-api-02
+      - prod-db-01
+      - prod-db-02
+
+  - name: prod-web
+    hosts:
+      - prod-web-01
+      - prod-web-02
+      - prod-web-03
+
+  - name: prod-api
+    hosts:
+      - prod-api-01
+      - prod-api-02
+
+  - name: prod-db
+    hosts:
+      - prod-db-01
+      - prod-db-02
+
+  - name: staging-all
+    hosts:
+      - staging-web-01
+      - staging-api-01
 
 global:
   timeout: 10
   use_pty: false
   script_dir: "scripts"
-  default_host: "production"
+  default_host: "prod-web-01"

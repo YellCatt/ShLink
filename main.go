@@ -21,11 +21,15 @@ type options struct {
 	scriptDir   string
 	listScripts bool
 	listFailed  bool
+	listHosts   bool
 	usePty      bool
 	jumpHost    string
 	jumpUser    string
 	jumpKey     string
 	jumpPasswd  string
+	group       string
+	tag         string
+	batch       bool
 }
 
 func parseFlags() (options, string) {
@@ -49,11 +53,15 @@ func parseFlags() (options, string) {
 	flag.StringVar(&opt.scriptDir, "script-dir", "", "脚本目录")
 	flag.BoolVar(&opt.listScripts, "list-scripts", false, "列出可用的脚本文件")
 	flag.BoolVar(&opt.listFailed, "list-failed", false, "列出执行失败的环境")
+	flag.BoolVar(&opt.listHosts, "list-hosts", false, "列出所有配置的主机")
 	flag.BoolVar(&opt.usePty, "pty", false, "是否申请伪终端")
 	flag.StringVar(&opt.jumpHost, "jump", "", "跳板机地址 host:port")
 	flag.StringVar(&opt.jumpUser, "jump-user", "", "跳板机用户名")
 	flag.StringVar(&opt.jumpKey, "jump-key", "", "跳板机私钥")
 	flag.StringVar(&opt.jumpPasswd, "jump-pass", "", "跳板机密码")
+	flag.StringVar(&opt.group, "group", "", "环境组名称（批量执行）")
+	flag.StringVar(&opt.tag, "tag", "", "标签筛选（按标签批量执行）")
+	flag.BoolVar(&opt.batch, "batch", false, "批量执行所有主机")
 	flag.Parse()
 	return opt, configFile
 }
@@ -119,14 +127,45 @@ func main() {
 		return
 	}
 
-	if opt.host == "" {
-		slog.Error("主机参数必填", "usage", "使用 -host 指定主机或在配置文件中设置 default_host")
+	if opt.listHosts {
+		listHosts(config)
+		return
+	}
+
+	var targetHosts []string
+	if opt.batch {
+		targetHosts = getAllHosts(config)
+	} else if opt.group != "" {
+		targetHosts = getHostsByGroup(config, opt.group)
+	} else if opt.tag != "" {
+		targetHosts = getHostsByTag(config, opt.tag)
+	} else if opt.host != "" {
+		targetHosts = []string{opt.host}
+	} else if config != nil && config.Global.DefaultHost != "" {
+		targetHosts = []string{config.Global.DefaultHost}
+	} else {
+		slog.Error("主机参数必填", "usage", "使用 -host 指定主机、-group 指定环境组、-tag 指定标签或 -batch 批量执行")
 		os.Exit(1)
 	}
 
-	if config != nil && loadErr == nil {
-		if hostConfig, ok := config.Hosts[opt.host]; ok {
-			slog.Info("从配置文件加载主机", "host", opt.host)
+	slog.Info("目标主机列表", "count", len(targetHosts), "hosts", strings.Join(targetHosts, ", "))
+
+	for _, hostName := range targetHosts {
+		slog.Info("========================================")
+		slog.Info("处理主机", "host", hostName)
+		executeOnHost(config, hostName, opt)
+	}
+
+	slog.Info("所有主机处理完成")
+}
+
+func executeOnHost(config *Config, hostName string, baseOpt options) {
+	opt := baseOpt
+	opt.host = hostName
+
+	if config != nil {
+		if hostConfig, ok := config.Hosts[hostName]; ok {
+			slog.Info("从配置文件加载主机", "host", hostName)
 			if opt.port == "" {
 				opt.port = hostConfig.Port
 			}
@@ -154,7 +193,7 @@ func main() {
 			if opt.scriptDir == "" {
 				opt.scriptDir = hostConfig.ScriptDir
 			}
-			if !opt.usePty {
+			if !opt.usePty && config.Global.UsePty {
 				opt.usePty = config.Global.UsePty
 			}
 			if opt.scriptDir == "" {
@@ -177,7 +216,9 @@ func main() {
 	client, err := dial(opt)
 	if err != nil {
 		slog.Error("连接失败", "error", err)
-		os.Exit(1)
+		saveSummary(hostName, "connection", "FAILED", err.Error())
+		saveFailedMarker(hostName)
+		return
 	}
 	defer client.Close()
 	slog.Info("已连接到主机", "host", opt.host, "port", opt.port)
@@ -186,11 +227,11 @@ func main() {
 		slog.Info("执行命令", "command", opt.command)
 		if err := runCommand(client, opt); err != nil {
 			slog.Error("命令执行失败", "error", err)
-			saveSummary(opt.host, opt.command, "FAILED", err.Error())
-			saveFailedMarker(opt.host)
-			os.Exit(1)
+			saveSummary(hostName, opt.command, "FAILED", err.Error())
+			saveFailedMarker(hostName)
+		} else {
+			saveSummary(hostName, opt.command, "SUCCESS", "")
 		}
-		saveSummary(opt.host, opt.command, "SUCCESS", "")
 	} else {
 		var scripts []string
 		if opt.script != "" {
@@ -199,7 +240,7 @@ func main() {
 			files, err := os.ReadDir(opt.scriptDir)
 			if err != nil {
 				slog.Error("读取脚本目录失败", "error", err)
-				os.Exit(1)
+				return
 			}
 			for _, file := range files {
 				if !file.IsDir() && strings.HasSuffix(file.Name(), ".sh") {
@@ -218,8 +259,8 @@ func main() {
 			scriptContent, err := os.ReadFile(scriptPath)
 			if err != nil {
 				slog.Error("读取脚本文件失败", "error", err, "file", scriptPath)
-				saveSummary(opt.host, scriptName, "FAILED", err.Error())
-				saveFailedMarker(opt.host)
+				saveSummary(hostName, scriptName, "FAILED", err.Error())
+				saveFailedMarker(hostName)
 				continue
 			}
 
@@ -227,15 +268,76 @@ func main() {
 			output, err := runScript(client, scriptContent)
 			if err != nil {
 				slog.Error("脚本执行失败", "script", scriptName, "error", err)
-				saveReport(opt.host, scriptName, output)
-				saveSummary(opt.host, scriptName, "FAILED", err.Error())
-				saveFailedMarker(opt.host)
+				saveReport(hostName, scriptName, output)
+				saveSummary(hostName, scriptName, "FAILED", err.Error())
+				saveFailedMarker(hostName)
 			} else {
-				saveReport(opt.host, scriptName, output)
-				saveSummary(opt.host, scriptName, "SUCCESS", "")
+				saveReport(hostName, scriptName, output)
+				saveSummary(hostName, scriptName, "SUCCESS", "")
 			}
 		}
 	}
+}
 
-	slog.Info("执行完成")
+func listHosts(config *Config) {
+	if config == nil {
+		slog.Warn("配置文件未加载")
+		return
+	}
+
+	slog.Info("已配置的主机列表:")
+	for name, hostConfig := range config.Hosts {
+		tags := ""
+		if len(hostConfig.Tags) > 0 {
+			tags = " [" + strings.Join(hostConfig.Tags, ", ") + "]"
+		}
+		slog.Info("主机", "name", name, "host", hostConfig.Host, "tags", tags)
+	}
+
+	if len(config.EnvGroups) > 0 {
+		slog.Info("环境组列表:")
+		for _, group := range config.EnvGroups {
+			slog.Info("环境组", "name", group.Name, "hosts", strings.Join(group.Hosts, ", "))
+		}
+	}
+}
+
+func getAllHosts(config *Config) []string {
+	if config == nil {
+		return []string{}
+	}
+	var hosts []string
+	for name := range config.Hosts {
+		hosts = append(hosts, name)
+	}
+	return hosts
+}
+
+func getHostsByGroup(config *Config, groupName string) []string {
+	if config == nil {
+		return []string{}
+	}
+	for _, group := range config.EnvGroups {
+		if group.Name == groupName {
+			return group.Hosts
+		}
+	}
+	slog.Warn("环境组未找到", "group", groupName)
+	return []string{}
+}
+
+func getHostsByTag(config *Config, tag string) []string {
+	if config == nil {
+		return []string{}
+	}
+	var hosts []string
+	for name, hostConfig := range config.Hosts {
+		for _, t := range hostConfig.Tags {
+			if t == tag {
+				hosts = append(hosts, name)
+				break
+			}
+		}
+	}
+	return hosts
 }
