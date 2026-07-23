@@ -337,7 +337,7 @@ func streamLines(prefix string, r io.Reader) {
 
 func main() {
 	loc, _ := time.LoadLocation("Asia/Shanghai")
-	slog.SetDefault(slog.New(slog.HandlerOptions{
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
@@ -346,7 +346,7 @@ func main() {
 			}
 			return a
 		},
-	}.NewTextHandler(os.Stderr)))
+	})))
 	
 	slog.Info("启动 shlink...")
 	
