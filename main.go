@@ -233,8 +233,34 @@ func runCommand(client *ssh.Client, opt options) error {
 		// 示例：go func() { time.Sleep(500ms); fmt.Fprintln(stdin, "sudo-password") }()
 	}
 
-	fmt.Fprintf(os.Stderr, "==> 执行命令: %s\n", opt.command)
 	return session.Run(opt.command)
+}
+
+func runScript(client *ssh.Client, scriptContent []byte) error {
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("创建会话失败: %w", err)
+	}
+	defer session.Close()
+
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("获取 stdin pipe 失败: %w", err)
+	}
+
+	if err := session.Start("bash"); err != nil {
+		return fmt.Errorf("启动 bash 失败: %w", err)
+	}
+
+	if _, err := stdin.Write(scriptContent); err != nil {
+		return fmt.Errorf("写入脚本内容失败: %w", err)
+	}
+	stdin.Close()
+
+	return session.Wait()
 }
 
 func runInteractiveShell(client *ssh.Client) error {
@@ -410,14 +436,15 @@ func main() {
 		return
 	}
 
+	var scriptContent []byte
 	if opt.script != "" {
 		scriptPath := filepath.Join(opt.scriptDir, opt.script)
-		scriptContent, err := os.ReadFile(scriptPath)
+		var err error
+		scriptContent, err = os.ReadFile(scriptPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "读取脚本文件失败: %v\n", err)
 			os.Exit(1)
 		}
-		opt.command = "bash -c " + fmt.Sprintf("%q", string(scriptContent))
 		fmt.Fprintf(os.Stderr, "==> 加载脚本: %s\n", scriptPath)
 	}
 
@@ -429,12 +456,21 @@ func main() {
 	defer client.Close()
 	fmt.Fprintf(os.Stderr, "==> 已连接到 %s:%s\n", opt.host, opt.port)
 
-	if err := runCommand(client, opt); err != nil {
-		fmt.Fprintf(os.Stderr, "命令执行失败: %v\n", err)
-		os.Exit(1)
+	if opt.script != "" && len(scriptContent) > 0 {
+		fmt.Fprintf(os.Stderr, "==> 执行脚本...\n")
+		if err := runScript(client, scriptContent); err != nil {
+			fmt.Fprintf(os.Stderr, "脚本执行失败: %v\n", err)
+			os.Exit(1)
+		}
+	} else if opt.command != "" {
+		fmt.Fprintf(os.Stderr, "==> 执行命令: %s\n", opt.command)
+		if err := runCommand(client, opt); err != nil {
+			fmt.Fprintf(os.Stderr, "命令执行失败: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
-	fmt.Fprintln(os.Stderr, "==> 命令执行完成")
+	fmt.Fprintln(os.Stderr, "==> 执行完成")
 }
 
 func initConfig() error {
