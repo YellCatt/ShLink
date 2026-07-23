@@ -42,11 +42,6 @@ type GlobalConfig struct {
 	DefaultHost string `yaml:"default_host"`
 }
 
-type Config struct {
-	Hosts  map[string]HostConfig `yaml:"hosts"`
-	Global GlobalConfig          `yaml:"global"`
-}
-
 func loadConfig(configFile string) (*Config, error) {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
