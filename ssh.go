@@ -153,18 +153,26 @@ func runScript(client *ssh.Client, scriptContent []byte) (string, error) {
 		return "", fmt.Errorf("获取 stdin pipe 失败: %w", err)
 	}
 
-	if err := session.Start("bash"); err != nil {
-		return "", fmt.Errorf("启动 bash 失败: %w", err)
+	shells := []string{"bash", "sh"}
+	var lastErr error
+
+	for _, shell := range shells {
+		if err := session.Start(shell); err != nil {
+			lastErr = fmt.Errorf("启动 %s 失败: %w", shell, err)
+			continue
+		}
+
+		if _, err := stdin.Write(scriptContent); err != nil {
+			return "", fmt.Errorf("写入脚本内容失败: %w", err)
+		}
+		stdin.Close()
+
+		if err := session.Wait(); err != nil {
+			return output.String(), err
+		}
+
+		return output.String(), nil
 	}
 
-	if _, err := stdin.Write(scriptContent); err != nil {
-		return "", fmt.Errorf("写入脚本内容失败: %w", err)
-	}
-	stdin.Close()
-
-	if err := session.Wait(); err != nil {
-		return output.String(), err
-	}
-
-	return output.String(), nil
+	return "", lastErr
 }
