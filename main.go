@@ -300,6 +300,11 @@ func streamLines(prefix string, r io.Reader) {
 }
 
 func main() {
+	if err := initConfig(); err != nil {
+		fmt.Fprintf(os.Stderr, "初始化配置失败: %v\n", err)
+		os.Exit(1)
+	}
+
 	opt, configFile := parseFlags()
 
 	if opt.command == "" && opt.script == "" && !opt.listScripts {
@@ -402,6 +407,97 @@ func main() {
 	}
 
 	fmt.Fprintln(os.Stderr, "==> 命令执行完成")
+}
+
+func initConfig() error {
+	dirs := []string{
+		"scripts",
+		"scripts/production",
+		"scripts/staging",
+		"scripts/backend",
+		"scripts/sudo",
+	}
+
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("创建目录失败 %s: %w", dir, err)
+		}
+	}
+
+	configContent := `hosts:
+  production:
+    host: 192.168.1.100
+    port: 22
+    user: root
+    password: ""
+    key_file: "~/.ssh/id_rsa"
+    script_dir: "scripts/production"
+
+  staging:
+    host: 192.168.1.101
+    port: 22
+    user: admin
+    password: ""
+    key_file: "~/.ssh/id_rsa"
+    script_dir: "scripts/staging"
+
+  backend:
+    host: 10.0.0.5
+    port: 22
+    user: appuser
+    key_file: "~/.ssh/id_rsa"
+    jump_host: 192.168.1.200
+    jump_user: bastion
+    jump_key: "~/.ssh/id_rsa"
+    script_dir: "scripts/backend"
+
+global:
+  timeout: 10
+  use_pty: false
+  script_dir: "scripts"
+`
+
+	if _, err := os.Stat("config.yaml"); os.IsNotExist(err) {
+		if err := os.WriteFile("config.yaml", []byte(configContent), 0644); err != nil {
+			return fmt.Errorf("创建配置文件失败: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "==> 已创建配置文件: config.yaml")
+	}
+
+	scripts := map[string]string{
+		"scripts/production/deploy.sh": `#!/bin/bash
+echo "Deploying to production..."
+cd /var/www/app
+git pull origin main
+docker-compose down
+docker-compose up -d
+echo "Deployment completed."`,
+		"scripts/staging/test.sh": `#!/bin/bash
+echo "Running tests on staging..."
+cd /var/www/app
+npm test
+echo "Tests completed."`,
+		"scripts/backend/health.sh": `#!/bin/bash
+echo "Checking backend health..."
+curl -s http://localhost:8080/health
+echo ""
+echo "Health check completed."`,
+		"scripts/sudo/update.sh": `#!/bin/bash
+echo "Running system update..."
+sudo apt-get update && sudo apt-get upgrade -y
+echo "System update completed."`,
+	}
+
+	for path, content := range scripts {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+				return fmt.Errorf("创建脚本文件失败 %s: %w", path, err)
+			}
+			fmt.Fprintln(os.Stderr, "==> 已创建脚本文件:", path)
+		}
+	}
+
+	return nil
 }
 
 func listScripts(scriptDir string) {

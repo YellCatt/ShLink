@@ -1,94 +1,31 @@
-# ==============================================================================
-# ShLink SSH 远程执行命令 - 配置文件
-# ==============================================================================
-# 使用说明：
-#   1. 将此文件复制为 config.yaml（或使用 -config 参数指定路径）
-#   2. 修改 hosts 中的配置项，添加你的远程主机
-#   3. 使用命令：shlink -host <主机名> -cmd <命令> 或 -script <脚本名>
-#   4. 命令行参数会覆盖配置文件中的对应值
-
-# ==============================================================================
-# 主机配置列表
-# ==============================================================================
 hosts:
-  # ------------------------------
-  # 示例1: 生产环境服务器（密钥认证）
-  # ------------------------------
   production:
-    host: 192.168.1.100          # 远程主机地址（IP 或域名）
-    port: 22                     # SSH 端口，默认 22
-    user: root                   # 登录用户名
-    password: ""                 # 密码（留空则使用密钥认证）
-    key_file: "~/.ssh/id_rsa"    # 私钥文件路径，支持 ~ 表示用户主目录
-    script_dir: "scripts"        # 脚本目录（相对于配置文件或绝对路径）
+    host: 192.168.1.100
+    port: 22
+    user: root
+    password: ""
+    key_file: "~/.ssh/id_rsa"
+    script_dir: "scripts/production"
 
-  # ------------------------------
-  # 示例2: 测试环境服务器（密码认证）
-  # ------------------------------
   staging:
     host: 192.168.1.101
     port: 22
     user: admin
-    password: "your-secret-password"  # 设置密码后优先使用密码认证
-    key_file: ""                      # 可留空
-    script_dir: "scripts/staging"     # 测试环境专用脚本目录
+    password: ""
+    key_file: "~/.ssh/id_rsa"
+    script_dir: "scripts/staging"
 
-  # ------------------------------
-  # 示例3: 内网服务器（通过跳板机访问）
-  # ------------------------------
   backend:
-    host: 10.0.0.5               # 目标内网主机
+    host: 10.0.0.5
     port: 22
     user: appuser
     key_file: "~/.ssh/id_rsa"
-    jump_host: 192.168.1.200     # 跳板机地址
-    jump_user: bastion           # 跳板机用户名（默认与目标主机相同）
-    jump_key: "~/.ssh/id_rsa"    # 跳板机私钥（默认与目标主机相同）
-    jump_passwd: ""              # 跳板机密码
+    jump_host: 192.168.1.200
+    jump_user: bastion
+    jump_key: "~/.ssh/id_rsa"
     script_dir: "scripts/backend"
 
-  # ------------------------------
-  # 示例4: 自定义端口的服务器
-  # ------------------------------
-  custom-port:
-    host: 192.168.1.102
-    port: 2222                   # 非标准 SSH 端口
-    user: deploy
-    key_file: "~/.ssh/deploy_key"
-    script_dir: "scripts"
-
-  # ------------------------------
-  # 示例5: 需要 sudo 的服务器（开启伪终端）
-  # ------------------------------
-  sudo-server:
-    host: 192.168.1.103
-    port: 22
-    user: ubuntu
-    key_file: "~/.ssh/id_rsa"
-    script_dir: "scripts/sudo"
-
-# ==============================================================================
-# 全局配置
-# ==============================================================================
 global:
-  timeout: 10                    # 连接超时时间（秒）
-  use_pty: false                 # 是否默认启用伪终端（sudo 场景需要）
-  script_dir: "scripts"          # 默认脚本目录
-
-# ==============================================================================
-# 使用示例
-# ==============================================================================
-# 1. 执行命令
-#    shlink -host production -cmd 'ls -la /var/www'
-#
-# 2. 执行脚本（会在 script_dir 目录下查找脚本文件）
-#    shlink -host production -script deploy.sh
-#
-# 3. 覆盖配置参数
-#    shlink -host staging -user root -cmd 'whoami'
-#
-# 4. 执行需要 sudo 的命令
-#    shlink -host sudo-server -pty -script update.sh
-#
-# 5. 列出可用脚本
-#    shlink -host production -list-scripts
+  timeout: 10
+  use_pty: false
+  script_dir: "scripts"
