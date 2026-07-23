@@ -16,20 +16,21 @@ import (
 )
 
 type options struct {
-	host       string
-	port       string
-	user       string
-	password   string
-	keyFile    string
-	command    string
-	script     string
-	scriptDir  string
+	host        string
+	port        string
+	user        string
+	password    string
+	keyFile     string
+	command     string
+	script      string
+	scriptDir   string
 	listScripts bool
-	usePty     bool
-	jumpHost   string
-	jumpUser   string
-	jumpKey    string
-	jumpPasswd string
+	listFailed  bool
+	usePty      bool
+	jumpHost    string
+	jumpUser    string
+	jumpKey     string
+	jumpPasswd  string
 }
 
 type HostConfig struct {
@@ -92,6 +93,7 @@ func parseFlags() (options, string) {
 	flag.StringVar(&opt.script, "script", "", "要执行的脚本文件名（在 script_dir 目录下）")
 	flag.StringVar(&opt.scriptDir, "script-dir", "", "脚本目录")
 	flag.BoolVar(&opt.listScripts, "list-scripts", false, "列出可用的脚本文件")
+	flag.BoolVar(&opt.listFailed, "list-failed", false, "列出执行失败的环境")
 	flag.BoolVar(&opt.usePty, "pty", false, "是否申请伪终端 (sudo 等交互场景)")
 	flag.StringVar(&opt.jumpHost, "jump", "", "跳板机地址 host:port")
 	flag.StringVar(&opt.jumpUser, "jump-user", "", "跳板机用户名")
@@ -459,6 +461,11 @@ func main() {
 		return
 	}
 
+	if opt.listFailed {
+		listFailed()
+		return
+	}
+
 	var scriptContent []byte
 	if opt.script != "" {
 		scriptPath := filepath.Join(opt.scriptDir, opt.script)
@@ -485,9 +492,12 @@ func main() {
 		if err != nil {
 			slog.Error("脚本执行失败", "error", err)
 			saveReport(opt.host, opt.script, output)
+			saveSummary(opt.host, opt.script, "FAILED", err.Error())
+			saveFailedMarker(opt.host)
 			os.Exit(1)
 		}
 		saveReport(opt.host, opt.script, output)
+		saveSummary(opt.host, opt.script, "SUCCESS", "")
 	} else if opt.command != "" {
 		slog.Info("执行命令", "command", opt.command)
 		if err := runCommand(client, opt); err != nil {
@@ -529,6 +539,79 @@ func saveReport(host, script, output string) {
 	}
 
 	slog.Info("报告已保存", "file", reportFile)
+}
+
+func saveSummary(host, script, status, errorMsg string) {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.FixedZone("CST", 8*60*60)
+	}
+
+	summaryFile := filepath.Join("report", "summary.log")
+	var entry string
+	if errorMsg != "" {
+		entry = fmt.Sprintf("[%s] %s | %s | %s | %s\n",
+			time.Now().In(loc).Format("2006-01-02 15:04:05"),
+			host,
+			script,
+			status,
+			errorMsg)
+	} else {
+		entry = fmt.Sprintf("[%s] %s | %s | %s\n",
+			time.Now().In(loc).Format("2006-01-02 15:04:05"),
+			host,
+			script,
+			status)
+	}
+
+	f, err := os.OpenFile(summaryFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		slog.Error("保存摘要失败", "error", err)
+		return
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(entry); err != nil {
+		slog.Error("写入摘要失败", "error", err)
+	}
+}
+
+func saveFailedMarker(host string) {
+	failedDir := filepath.Join("report", "failed")
+	if err := os.MkdirAll(failedDir, 0755); err != nil {
+		slog.Error("创建失败目录失败", "error", err)
+		return
+	}
+
+	markerFile := filepath.Join(failedDir, host)
+	if err := os.WriteFile(markerFile, []byte(""), 0644); err != nil {
+		slog.Error("创建失败标记失败", "error", err)
+	}
+}
+
+func listFailed() {
+	failedDir := filepath.Join("report", "failed")
+	files, err := os.ReadDir(failedDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			slog.Info("没有失败的环境")
+			return
+		}
+		slog.Error("读取失败目录失败", "error", err)
+		return
+	}
+
+	if len(files) == 0 {
+		slog.Info("没有失败的环境")
+		return
+	}
+
+	slog.Info("失败的环境列表:")
+	for _, file := range files {
+		if !file.IsDir() {
+			slog.Warn("失败环境", "host", file.Name())
+		}
+	}
 }
 
 func initConfig() error {
