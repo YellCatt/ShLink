@@ -74,7 +74,14 @@ func loadConfig(configFile string) (*Config, error) {
 func parseFlags() (options, string) {
 	var opt options
 	var configFile string
-	flag.StringVar(&configFile, "config", "config.yaml", "配置文件路径")
+	
+	exPath, err := os.Executable()
+	defaultConfig := "config.yaml"
+	if err == nil {
+		defaultConfig = filepath.Join(filepath.Dir(exPath), "config.yaml")
+	}
+	
+	flag.StringVar(&configFile, "config", defaultConfig, "配置文件路径")
 	flag.StringVar(&opt.host, "host", "", "远程主机地址或配置文件中的主机名 (必填)")
 	flag.StringVar(&opt.port, "port", "", "远程主机端口")
 	flag.StringVar(&opt.user, "user", "", "登录用户名")
@@ -302,25 +309,34 @@ func streamLines(prefix string, r io.Reader) {
 }
 
 func main() {
+	fmt.Fprintf(os.Stderr, "==> 启动 shlink...\n")
+	
 	if err := initConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, "初始化配置失败: %v\n", err)
 		os.Exit(1)
 	}
 
 	opt, configFile := parseFlags()
+	fmt.Fprintf(os.Stderr, "==> 配置文件路径: %s\n", configFile)
+	fmt.Fprintf(os.Stderr, "==> 命令行指定的主机: [%s]\n", opt.host)
 
 	config, err := loadConfig(configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "警告: 加载配置文件失败: %v (将使用命令行参数)\n", err)
 	} else {
+		fmt.Fprintf(os.Stderr, "==> 配置文件加载成功\n")
+		fmt.Fprintf(os.Stderr, "==> 默认主机配置: [%s]\n", config.Global.DefaultHost)
+		
 		if opt.host == "" && config.Global.DefaultHost != "" {
 			opt.host = config.Global.DefaultHost
 			fmt.Fprintf(os.Stderr, "==> 使用默认主机: %s\n", opt.host)
+		} else if opt.host == "" && config.Global.DefaultHost == "" {
+			fmt.Fprintf(os.Stderr, "警告: 默认主机未配置\n")
 		}
 	}
 
 	if opt.host == "" {
-		fmt.Fprintln(os.Stderr, "用法示例:")
+		fmt.Fprintln(os.Stderr, "\n用法示例:")
 		fmt.Fprintln(os.Stderr, "  直接运行: shlink")
 		fmt.Fprintln(os.Stderr, "  指定主机: shlink -host production")
 		fmt.Fprintln(os.Stderr, "  密码认证: shlink -host 192.168.1.100 -user root -password secret -cmd 'ls -la'")
