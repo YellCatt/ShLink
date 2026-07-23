@@ -237,31 +237,36 @@ func runCommand(client *ssh.Client, opt options) error {
 	return session.Run(opt.command)
 }
 
-func runScript(client *ssh.Client, scriptContent []byte) error {
+func runScript(client *ssh.Client, scriptContent []byte) (string, error) {
 	session, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("创建会话失败: %w", err)
+		return "", fmt.Errorf("创建会话失败: %w", err)
 	}
 	defer session.Close()
 
-	session.Stdout = os.Stdout
-	session.Stderr = os.Stderr
+	var output strings.Builder
+	session.Stdout = io.MultiWriter(os.Stdout, &output)
+	session.Stderr = io.MultiWriter(os.Stderr, &output)
 
 	stdin, err := session.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("获取 stdin pipe 失败: %w", err)
+		return "", fmt.Errorf("获取 stdin pipe 失败: %w", err)
 	}
 
 	if err := session.Start("bash"); err != nil {
-		return fmt.Errorf("启动 bash 失败: %w", err)
+		return "", fmt.Errorf("启动 bash 失败: %w", err)
 	}
 
 	if _, err := stdin.Write(scriptContent); err != nil {
-		return fmt.Errorf("写入脚本内容失败: %w", err)
+		return "", fmt.Errorf("写入脚本内容失败: %w", err)
 	}
 	stdin.Close()
 
-	return session.Wait()
+	if err := session.Wait(); err != nil {
+		return output.String(), err
+	}
+
+	return output.String(), nil
 }
 
 func runInteractiveShell(client *ssh.Client) error {
@@ -476,10 +481,13 @@ func main() {
 
 	if opt.script != "" && len(scriptContent) > 0 {
 		slog.Info("执行脚本...")
-		if err := runScript(client, scriptContent); err != nil {
+		output, err := runScript(client, scriptContent)
+		if err != nil {
 			slog.Error("脚本执行失败", "error", err)
+			saveReport(opt.host, opt.script, output)
 			os.Exit(1)
 		}
+		saveReport(opt.host, opt.script, output)
 	} else if opt.command != "" {
 		slog.Info("执行命令", "command", opt.command)
 		if err := runCommand(client, opt); err != nil {
@@ -489,6 +497,38 @@ func main() {
 	}
 
 	slog.Info("执行完成")
+}
+
+func saveReport(host, script, output string) {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.FixedZone("CST", 8*60*60)
+	}
+
+	reportDir := filepath.Join("report", host)
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		slog.Error("创建报告目录失败", "error", err, "directory", reportDir)
+		return
+	}
+
+	timestamp := time.Now().In(loc).Format("20060102_150405")
+	scriptName := strings.TrimSuffix(script, ".sh")
+	reportFile := filepath.Join(reportDir, fmt.Sprintf("%s_%s.log", scriptName, timestamp))
+
+	lines := strings.Split(output, "\n")
+	var formattedOutput strings.Builder
+	for _, line := range lines {
+		if line != "" {
+			formattedOutput.WriteString(fmt.Sprintf("[%s] %s\n", time.Now().In(loc).Format("2006-01-02 15:04:05"), line))
+		}
+	}
+
+	if err := os.WriteFile(reportFile, []byte(formattedOutput.String()), 0644); err != nil {
+		slog.Error("保存报告失败", "error", err, "file", reportFile)
+		return
+	}
+
+	slog.Info("报告已保存", "file", reportFile)
 }
 
 func initConfig() error {
