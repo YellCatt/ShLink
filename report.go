@@ -4,11 +4,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/sagikazarmark/slog-shim"
 )
+
+var ansiColorRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+var timestampRegex = regexp.MustCompile(`^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*`)
+
+func removeANSICodes(s string) string {
+	return ansiColorRegex.ReplaceAllString(s, "")
+}
+
+func removeTimestamp(s string) string {
+	return timestampRegex.ReplaceAllString(s, "")
+}
 
 func saveReport(host, script, output string) {
 	loc, err := time.LoadLocation("Asia/Shanghai")
@@ -30,7 +42,12 @@ func saveReport(host, script, output string) {
 	var formattedOutput strings.Builder
 	for _, line := range lines {
 		if line != "" {
-			formattedOutput.WriteString(fmt.Sprintf("[%s] %s\n", time.Now().In(loc).Format("2006-01-02 15:04:05"), line))
+			line = removeANSICodes(line)
+			line = removeTimestamp(line)
+			line = strings.TrimSpace(line)
+			if line != "" {
+				formattedOutput.WriteString(fmt.Sprintf("[%s] %s\n", time.Now().In(loc).Format("2006-01-02 15:04:05"), line))
+			}
 		}
 	}
 
