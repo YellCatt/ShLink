@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/sagikazarmark/slog-shim"
 	"gopkg.in/yaml.v3"
 )
 

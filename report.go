@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sagikazarmark/slog-shim"
 )
 
 func saveReport(host, script, output string) {
